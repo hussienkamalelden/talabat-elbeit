@@ -1,0 +1,8 @@
+// إعدادات Cloudflare Workers: الموقع ملفات ثابتة بس من فولدر public (مفيش كود سيرفر)
+{
+  "name": "talabat-elbeit",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public"
+  }
+}
