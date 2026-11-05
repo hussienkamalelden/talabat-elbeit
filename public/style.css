@@ -302,6 +302,23 @@ main {
 .tap.rm { color: var(--muted); }
 .tap.rm:hover { color: var(--danger); border-color: var(--danger); }
 
+/* عنوان الكاتيجوري جوه القايمة */
+.grp-head {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 2px 4px;
+  font-size: .85rem;
+  font-weight: 700;
+  color: var(--t-c);
+}
+.grp-head:first-child { margin-top: 0; }
+.grp-head .ic { width: 18px; height: 18px; }
+.grp-head b { margin-inline-start: auto; font-size: .75rem; color: var(--muted); }
+.grp-head.done b { color: var(--ok); }
+
 .drop-line {
   list-style: none;
   height: 4px;

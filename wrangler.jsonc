@@ -3,6 +3,8 @@
   "name": "talabat-elbeit",
   "compatibility_date": "2026-10-01",
   "assets": {
-    "directory": "./public"
+    "directory": "./public",
+    // أي رابط مش ملف (زي /reset) يفتح الصفحة الرئيسية
+    "not_found_handling": "single-page-application"
   }
 }

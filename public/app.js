@@ -17,6 +17,7 @@
   const catOf = (key) => CATS.find((c) => c.key === key) || CATS[CATS.length - 1];
   const tint = (key) => { const c = catOf(key); return `--h:${c.h};${c.gray ? '--s:0%;' : ''}`; };
   const ZONE_NAME = { street: 'الشارع', online: 'الأونلاين' };
+  const ZONE_TO = { street: 'للشارع', online: 'للأونلاين' };
 
   // المنتجات الأصلية (أول تشغيل + زرار "رجّع الأصل") — نفس اللي في آخر supabase/schema.sql
   const SEED = {
@@ -358,10 +359,14 @@
   }
 
   // ================== الأفعال ==================
-  // المنتجات المختارة في عمود معيّن، بالترتيب
+  // المنتجات المختارة في قايمة معيّنة: متجمّعة تحت الكاتيجوري بتاعتها، وجوه كل كاتيجوري بترتيبك انت
+  const CAT_ORDER = new Map(CATS.map((c, i) => [c.key, i]));
+  const catIndex = (id) => CAT_ORDER.get(itemOf(id)?.category) ?? CATS.length;
   const zoneRows = (zone) => [...state.sel.values()]
     .filter((s) => s.source === zone)
-    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || byAr(nameOf(a.item_id), nameOf(b.item_id)));
+    .sort((a, b) => catIndex(a.item_id) - catIndex(b.item_id)
+      || (a.position ?? 0) - (b.position ?? 0)
+      || byAr(nameOf(a.item_id), nameOf(b.item_id)));
 
   function moveTo(id, zone, index) {
     const cur = state.sel.get(id);
@@ -417,7 +422,7 @@
       toast(`اتشال «${nameOf(id)}»`);
     } else {
       moveTo(id, state.dest);
-      toast(`اتضاف «${nameOf(id)}» لـ${ZONE_NAME[state.dest]}`);
+      toast(`اتضاف «${nameOf(id)}» ${ZONE_TO[state.dest]}`);
     }
   }
 
@@ -458,7 +463,7 @@
     persist(() => api.addItem(item));
     // المنتج الجديد بيتضاف على طول للمكان المختار (شارع/أونلاين)
     moveTo(item.id, state.dest);
-    toast(`اتضاف «${item.name}» في ${catOf(cat).name} ولـ${ZONE_NAME[state.dest]}`);
+    toast(`اتضاف «${item.name}» في ${catOf(cat).name} و${ZONE_TO[state.dest]}`);
   }
 
   function deleteItem(id) {
@@ -555,8 +560,26 @@
     nav.textContent = !rows.length ? '' : left === 0 ? '✓' : String(left);
     nav.classList.toggle('done', rows.length > 0 && left === 0);
 
+    // عنوان لكل كاتيجوري فوق منتجاتها (فيه جبت كام من كام)
+    const groups = new Map();
+    rows.forEach((r) => {
+      const k = itemOf(r.item_id)?.category || 'other';
+      const g = groups.get(k) || { total: 0, done: 0 };
+      g.total++; if (r.bought) g.done++;
+      groups.set(k, g);
+    });
+    let lastCat = null;
+    const head = (r) => {
+      const k = itemOf(r.item_id)?.category || 'other';
+      if (k === lastCat) return '';
+      lastCat = k;
+      const c = catOf(k), g = groups.get(k);
+      return `<li class="grp-head tinted${g.done === g.total ? ' done' : ''}" style="${tint(k)}" aria-hidden="true">
+        ${ic(k)}<span>${c.name}</span><b>${g.done}/${g.total}</b></li>`;
+    };
+
     $(el.list).innerHTML = rows.length
-      ? rows.map((r, i) => `
+      ? rows.map((r, i) => `${head(r)}
         <li class="row${r.bought ? ' bought' : ''}" data-drag data-id="${r.item_id}">
           <span class="grip" title="اسحب عشان ترتّب" aria-label="الترتيب ${i + 1} — اسحب عشان ترتّب">${ic('grip')}</span>
           <button type="button" class="name" data-act="toggle" aria-pressed="${r.bought}">${esc(r.name)}</button>
@@ -841,7 +864,6 @@
   }
 
   $('#clearAll').addEventListener('click', clearAll);
-  $('#resetAll').addEventListener('click', resetAll);
   $('#editToggle').addEventListener('click', (e) => {
     state.editing = !state.editing;
     e.currentTarget.setAttribute('aria-pressed', state.editing);
@@ -1005,6 +1027,12 @@
     await reload();
     ready = true;
     if (document.visibilityState === 'visible') api.connect(onRemoteChange);
+
+    // "رجّع الأصل" مخفي: بيظهر بس لو فتحت الموقع على /reset أو ?reset أو #reset
+    if (/\/reset\/?$/.test(location.pathname) || /[?&]reset\b/.test(location.search) || location.hash === '#reset') {
+      history.replaceState(null, '', location.pathname.replace(/reset\/?$/, '') || '/');
+      resetAll();
+    }
 
     // لو الإشعارات شغالة بس الاشتراك اتغير (أو اتسجّل من جهاز تاني)، نحدّثه مرة واحدة
     if (await refreshBell()) {
