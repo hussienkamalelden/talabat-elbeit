@@ -25,8 +25,14 @@
 </head>
 <body>
   <header class="top">
-    <h1><span class="logo" data-icon="basket"></span>طلبات البيت</h1>
-    <button id="resetAll" class="btn ghost icon-only" type="button" aria-label="رجّع كل حاجة زي الأول" title="رجّع كل حاجة زي الأول"><span data-icon="reset"></span></button>
+    <div class="brand">
+      <span class="logo" data-icon="basket"></span>
+      <div>
+        <h1>طلبات البيت</h1>
+        <span id="conn" class="conn" data-state="off" role="status" aria-live="polite">مش متصل</span>
+      </div>
+    </div>
+    <button id="resetAll" class="btn ghost" type="button" title="رجّع كل حاجة زي الأول">ريست</button>
     <button id="clearAll" class="btn danger" type="button"><span data-icon="trash"></span>امسح الكل</button>
   </header>
 

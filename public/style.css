@@ -111,7 +111,33 @@ body[data-sync="error"]::before { transform: scaleX(1); background: var(--danger
   gap: 10px;
   flex: none;
 }
-.top h1 { font-size: 1.3rem; margin: 0; flex: 1; white-space: nowrap; display: flex; align-items: center; gap: 8px; }
+.brand { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
+.top h1 { font-size: 1.25rem; margin: 0; line-height: 1.2; white-space: nowrap; }
+
+/* علامة الاتصال */
+.conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .75rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.conn::before {
+  content: '';
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.conn[data-state="on"] { color: #16a34a; }
+.conn[data-state="on"]::before { background: #22c55e; box-shadow: 0 0 0 3px rgb(34 197 94 / .22), 0 0 8px rgb(34 197 94 / .8); }
+.conn[data-state="connecting"] { color: #d97706; }
+.conn[data-state="connecting"]::before { background: #f59e0b; animation: conn-pulse 1s ease-in-out infinite; }
+.conn[data-state="local"] { color: var(--danger); }
+.conn[data-state="local"]::before { background: var(--danger); }
+@keyframes conn-pulse { 50% { opacity: .3; } }
+@media (prefers-color-scheme: dark) { .conn[data-state="on"] { color: #4ade80; } }
 .logo { width: 36px; height: 36px; border-radius: 11px; background: var(--neutral); color: var(--text); align-items: center; justify-content: center; }
 .logo .ic { width: 22px; height: 22px; stroke-width: 2; }
 
@@ -519,7 +545,6 @@ body.is-dragging .tab { border-style: dashed; }
 .cf-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .btn.danger-solid { background: var(--danger); color: #fff; }
 .btn.danger-solid:hover { background: color-mix(in srgb, var(--danger) 85%, #000); }
-.btn.icon-only { width: var(--tap); padding: 0; color: var(--muted); }
 
 .toast {
   position: fixed;
@@ -538,7 +563,7 @@ body.is-dragging .tab { border-style: dashed; }
 @media (max-width: 600px) {
   :root { --tap: 38px; }
   .top { padding: 10px 10px; }
-  .top h1 { font-size: 1.15rem; }
+  .top h1 { font-size: 1.1rem; }
   .logo { width: 32px; height: 32px; }
   .tap .ic { width: 18px; height: 18px; }
   main { padding: 0 10px 10px; gap: 8px; }

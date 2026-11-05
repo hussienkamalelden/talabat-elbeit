@@ -1,7 +1,7 @@
 // Service Worker: بيخلّي الموقع يتسطّب كتطبيق، وبيفتح بسرعة.
 // الاستراتيجية: النت الأول (عشان أي تعديل يظهر على طول)، ولو مفيش نت يفتح آخر نسخة محفوظة.
 // الداتا نفسها (Supabase) مش بتعدّي من هنا.
-const CACHE = 'talabat-v11';
+const CACHE = 'talabat-v12';
 const SHELL = [
   './', 'index.html', 'style.css', 'app.js', 'icons.js', 'config.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png',

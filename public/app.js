@@ -119,7 +119,12 @@
         channel = sb.channel('talabat')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, onChange)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'selections' }, onChange)
-          .subscribe();
+          .subscribe((status) => {
+            if (status === 'SUBSCRIBED') setConn('on');
+            else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setConn('connecting');   // بيحاول تاني لوحده
+            else if (status === 'CLOSED') setConn('off');
+          });
+        setConn('connecting');
       },
       async disconnect() {
         if (!channel) return;
@@ -127,6 +132,7 @@
         channel = null;
         await sb.removeChannel(ch);
         sb.realtime.disconnect();   // يقفل الـ WebSocket نفسه
+        setConn('off');
       },
       isConnected: () => Boolean(channel),
     };
@@ -255,6 +261,14 @@
   // خط رفيع فوق الصفحة وقت الحفظ بس
   function setSync(s) { document.body.dataset.sync = s; }
 
+  // علامة الاتصال اللي تحت العنوان: متصل (أخضر) / بيتصل / مش متصل
+  function setConn(state) {
+    const el = $('#conn');
+    if (!REMOTE) state = 'local';
+    el.dataset.state = state;
+    el.textContent = { on: 'متصل', connecting: 'بيتصل…', off: 'مش متصل', local: 'مش متصل بالسيرفر' }[state];
+  }
+
   // ================== الأفعال ==================
   // المنتجات المختارة في عمود معيّن، بالترتيب (رقم 1 الأول)
   const zoneRows = (zone) => [...state.sel.values()]
@@ -372,7 +386,7 @@
   async function resetAll() {
     const fresh = seedItems();
     const ok = await ask({
-      icon: 'reset',
+      icon: 'trash',
       title: 'ترجّع كل حاجة زي الأول؟',
       text: `هيتمسح كل المختار فوق، وأي منتج ضفته أو مسحته أو غيّرت الكاتيجوري بتاعته، وترجع القايمة الأصلية (${fresh.length} منتج). الخطوة دي مينفعش تترجع.`,
       yes: 'أيوه، رجّع كل حاجة',
@@ -692,6 +706,7 @@
   addEventListener('pageshow', goOnline);                          // راجع من الـ back/forward cache
   addEventListener('pagehide', () => { flushSels(); clearTimeout(hideTimer); api?.disconnect(); });
   addEventListener('online', goOnline);                            // النت رجع
+  addEventListener('offline', () => setConn('off'));               // النت قطع
 
   let toastTimer;
   function toast(msg) {
@@ -704,11 +719,13 @@
 
   // ================== تشغيل ==================
   (async () => {
+    setConn(REMOTE ? 'connecting' : 'local');
     try {
       api = REMOTE ? await remoteApi() : localApi();
     } catch (err) {
       console.error(err);
       setSync('error');
+      setConn('off');
       toast('مش قادر أحمّل Supabase — اتأكد من النت');
       return;
     }
