@@ -1,7 +1,7 @@
 // Service Worker: بيخلّي الموقع يتسطّب كتطبيق، وبيفتح بسرعة.
 // الاستراتيجية: النت الأول (عشان أي تعديل يظهر على طول)، ولو مفيش نت يفتح آخر نسخة محفوظة.
 // الداتا نفسها (Supabase) مش بتعدّي من هنا.
-const CACHE = 'talabat-v10';
+const CACHE = 'talabat-v11';
 const SHELL = [
   './', 'index.html', 'style.css', 'app.js', 'icons.js', 'config.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png',
@@ -25,10 +25,14 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     fetch(req, { cache: 'no-cache' })   // يتأكد من السيرفر كل مرة (رد سريع لو الملف متغيرش)
       .then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(req, copy));
+        // نحفظ الردود السليمة بس (مش صفحات 404 أو أخطاء)
+        if (res.ok && res.type === 'basic') {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy));
+        }
         return res;
       })
-      .catch(() => caches.match(req).then((r) => r || caches.match('index.html'))),
+      // مفيش نت: آخر نسخة محفوظة، ولو فتح صفحة → الصفحة الرئيسية
+      .catch(() => caches.match(req).then((r) => r || (req.mode === 'navigate' ? caches.match('index.html') : Response.error()))),
   );
 });
