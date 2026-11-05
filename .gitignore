@@ -8,3 +8,6 @@ desktop.ini
 # Local tools
 .claude/
 *.log
+
+# Push notification private key (لازم يفضل سر)
+supabase/.vapid-keys.txt

@@ -1,7 +1,7 @@
-// Service Worker: بيخلّي الموقع يتسطّب كتطبيق، وبيفتح بسرعة.
+// Service Worker: بيخلّي الموقع يتسطّب كتطبيق، وبيفتح بسرعة، وبيستقبل الإشعارات.
 // الاستراتيجية: النت الأول (عشان أي تعديل يظهر على طول)، ولو مفيش نت يفتح آخر نسخة محفوظة.
 // الداتا نفسها (Supabase) مش بتعدّي من هنا.
-const CACHE = 'talabat-v12';
+const CACHE = 'talabat-v13';
 const SHELL = [
   './', 'index.html', 'style.css', 'app.js', 'icons.js', 'config.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png',
@@ -34,5 +34,33 @@ self.addEventListener('fetch', (e) => {
       })
       // مفيش نت: آخر نسخة محفوظة، ولو فتح صفحة → الصفحة الرئيسية
       .catch(() => caches.match(req).then((r) => r || (req.mode === 'navigate' ? caches.match('index.html') : Response.error()))),
+  );
+});
+
+// ================== الإشعارات ==================
+// بتوصل من Supabase (Edge Function "notify") لما حد يضيف منتج للطلبات
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data && e.data.text() }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'طلبات البيت', {
+    body: d.body || 'فيه حاجة جديدة في الطلبات',
+    icon: 'icons/icon-192.png',
+    badge: 'icons/icon-192.png',
+    tag: d.tag || 'talabat',      // كذا إشعار ورا بعض بيتجمعوا في واحد
+    renotify: true,
+    dir: 'rtl',
+    lang: 'ar',
+    data: { url: d.url || './' },
+  }));
+});
+
+// دوسة على الإشعار: يفتح التطبيق (أو يرجعله لو مفتوح)
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) if ('focus' in c) return c.focus();
+      return self.clients.openWindow(e.notification.data?.url || './');
+    }),
   );
 });

@@ -16,8 +16,9 @@
   const CAT_KEYS = new Set(CATS.map((c) => c.key));
   const catOf = (key) => CATS.find((c) => c.key === key) || CATS[CATS.length - 1];
   const tint = (key) => { const c = catOf(key); return `--h:${c.h};${c.gray ? '--s:0%;' : ''}`; };
+  const ZONE_NAME = { street: 'الشارع', online: 'الأونلاين' };
 
-  // المنتجات الأصلية (أول تشغيل + زرار الريست) — نفس اللي في آخر supabase/schema.sql
+  // المنتجات الأصلية (أول تشغيل + زرار "رجّع الأصل") — نفس اللي في آخر supabase/schema.sql
   const SEED = {
     veg: ['خضار متنوع وفاكهة', 'بطاطس محمرة', 'بسلة وجزر بسمة'],
     meat: ['لحمة', 'فراخ', 'جمبري وسمك', 'تركي مدخن'],
@@ -42,22 +43,14 @@
   // بصمة الملف (SRI): لو حد عدّل الملف على الـ CDN المتصفح هيرفض يشغّله
   const SUPABASE_JS_SRI = 'sha384-3lSoufGjgosjqp3JDr/NReX3PjMd3SlC8wJ23CWFjB6DSFNf71I0DhcRTUm9MwgO';
   const LS_KEY = 'talabat-elbeit-v5';
-  const TAB_KEY = 'talabat-elbeit-tab';
-
-  // المنتجات الأصلية بـ ids جديدة (بتستخدم في أول تشغيل وفي الريست)
-  const seedItems = () => Object.entries(SEED)
-    .flatMap(([category, names]) => names.map((name) => ({ id: uuid(), name, category })));
+  const PREF_KEY = 'talabat-elbeit-prefs';
+  const DEVICE_KEY = 'talabat-elbeit-device';
 
   // ================== أدوات ==================
   const $ = (s) => document.querySelector(s);
   const ic = window.ic;   // أيقونات SVG من icons.js
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  // توحيد الكتابة العربي عشان البحث (أ/ا، ة/ه، ى/ي، تشكيل)
-  const norm = (s) => s.trim().toLowerCase()
-    .replace(/[ً-ْـ]/g, '')
-    .replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي')
-    .replace(/\s+/g, ' ');
   const byAr = (a, b) => a.localeCompare(b, 'ar');
   const uuid = () => {
     if (crypto.randomUUID) return crypto.randomUUID();
@@ -73,16 +66,101 @@
     s.onload = ok; s.onerror = () => fail(new Error('failed to load ' + src));
     document.head.appendChild(s);
   });
+  const lsGet = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* مش مهم */ } };
+  const mobile = matchMedia('(max-width: 760px)');
+
+  // كل جهاز ليه رقم ثابت — عشان الإشعار ميوصلش للي ضاف المنتج نفسه
+  const DEVICE = lsGet(DEVICE_KEY) || uuid();
+  lsSet(DEVICE_KEY, DEVICE);
+
+  // ================== البحث الذكي ==================
+  // توحيد الكتابة: أ/إ/آ=ا، ة=ه، ى/ئ=ي، ؤ=و، التشكيل
+  const norm = (s) => s.trim().toLowerCase()
+    .replace(/[ً-ْـ]/g, '')
+    .replace(/[أإآٱ]/g, 'ا').replace(/ة/g, 'ه').replace(/[ىئ]/g, 'ي').replace(/ؤ/g, 'و').replace(/ء/g, '')
+    .replace(/\s+/g, ' ');
+  // للبحث بس: حروف بتتلخبط في الكتابة (ذ/ظ=ز، ث/ص=س، ط=ت، ض=د)
+  const fold = (s) => norm(s).replace(/[ذظ]/g, 'ز').replace(/[ثص]/g, 'س').replace(/ط/g, 'ت').replace(/ض/g, 'د');
+  const stripAl = (w) => (w.length > 4 && w.startsWith('ال') ? w.slice(2) : w);
+
+  // مسافة بين كلمتين (عدد الحروف الغلط/الناقصة/الزيادة/المقلوبة)
+  function editDistance(a, b, max) {
+    if (Math.abs(a.length - b.length) > max) return max + 1;
+    let prev2 = null, prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i];
+      let rowMin = i;
+      for (let j = 1; j <= b.length; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        let v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+        if (prev2 && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, prev2[j - 2] + 1);
+        cur.push(v);
+        rowMin = Math.min(rowMin, v);
+      }
+      if (rowMin > max) return max + 1;
+      prev2 = prev; prev = cur;
+    }
+    return prev[b.length];
+  }
+
+  function wordScore(qw, words) {
+    let best = 0;
+    for (const w of words) {
+      if (w === qw) return 100;
+      if (w.startsWith(qw)) best = Math.max(best, 90);
+      else if (w.includes(qw)) best = Math.max(best, 70);
+      else if (qw.length >= 3) {
+        // كلمة قصيرة = غلطة واحدة بس في الكلمة كلها، والأطول تستحمل أكتر وتقارن بأول الكلمة كمان
+        const tol = qw.length <= 5 ? 1 : 2;
+        let d = editDistance(qw, w, tol);
+        if (qw.length >= 4) d = Math.min(d, editDistance(qw, w.slice(0, qw.length), tol));
+        if (d <= tol) best = Math.max(best, 60 - d * 15);
+      }
+    }
+    return best;
+  }
+
+  // درجة التطابق (0 = مش مطابق)
+  function matchScore(name, qf) {
+    const f = fold(name);
+    if (f.includes(qf)) return 300 - f.indexOf(qf);
+    const words = f.split(' ').map(stripAl);
+    const qws = qf.split(' ').filter(Boolean).map(stripAl);
+    let total = 0;
+    for (const qw of qws) {
+      const s = wordScore(qw, words);
+      if (!s) return 0;
+      total += s;
+    }
+    return total / qws.length;
+  }
+
+  function search(query) {
+    const qf = fold(query);
+    if (!qf) return [];
+    const res = state.items
+      .map((i) => ({ i, s: matchScore(i.name, qf) }))
+      .filter((r) => r.s > 0)
+      .sort((a, b) => b.s - a.s || byAr(a.i.name, b.i.name));
+    // لو فيه نتيجة قوية، نشيل النتايج الضعيفة جدًا عشان القايمة تبقى نضيفة
+    const best = res[0]?.s || 0;
+    return res.filter((r) => best < 90 || r.s >= best * 0.3).map((r) => r.i);
+  }
 
   // ================== الحالة ==================
-  let savedTab = null;
-  try { savedTab = localStorage.getItem(TAB_KEY); } catch { /* مش مهم */ }
+  const prefs = lsGet(PREF_KEY) || {};
   const state = {
     items: [], sel: new Map(), query: '', editing: false,
-    cat: CAT_KEYS.has(savedTab) ? savedTab : CATS[0].key,   // الكاتيجوري المفتوحة تحت
+    cat: CAT_KEYS.has(prefs.cat) ? prefs.cat : CATS[0].key,         // الكاتيجوري المفتوحة
+    dest: prefs.dest === 'online' ? 'online' : 'street',             // المنتج هيتضاف فين
+    view: ['street', 'online', 'products'].includes(prefs.view) ? prefs.view : 'street',   // الشاشة (موبايل)
   };
+  const savePrefs = () => lsSet(PREF_KEY, { cat: state.cat, dest: state.dest, view: state.view });
   const itemOf = (id) => state.items.find((i) => i.id === id);
   const nameOf = (id) => itemOf(id)?.name ?? '';
+  const seedItems = () => Object.entries(SEED)
+    .flatMap(([category, names]) => names.map((name) => ({ id: uuid(), name, category })));
 
   // ================== التخزين ==================
   // نفس الواجهة للاتنين: Supabase أو localStorage (للتجربة بس)
@@ -96,6 +174,20 @@
     });
     const must = ({ data, error }) => { if (error) throw error; return data; };
     let channel = null;
+    let withDevice = true;   // لو عمود added_by لسه مش موجود في الداتابيز، نكمّل من غيره
+    const COLS = ['item_id', 'source', 'qty', 'bought', 'position'];
+    const pick = (s) => Object.fromEntries(COLS.map((k) => [k, s[k]]));
+
+    async function upsertSels(list) {
+      const rows = list.map((s) => (withDevice ? { ...pick(s), added_by: DEVICE } : pick(s)));
+      const res = await sb.from('selections').upsert(rows, { onConflict: 'item_id' });
+      if (res.error && withDevice && /added_by/.test(res.error.message || '')) {
+        withDevice = false;
+        return upsertSels(list);
+      }
+      return must(res);
+    }
+
     return {
       async load() {
         const [items, sels] = (await Promise.all([
@@ -107,13 +199,17 @@
       addItem: (item) => sb.from('items').insert(item).then(must),
       updateItem: (id, patch) => sb.from('items').update(patch).eq('id', id).then(must),
       deleteItem: (id) => sb.from('items').delete().eq('id', id).then(must),
-      saveSels: (list) => sb.from('selections').upsert(list, { onConflict: 'item_id' }).then(must),
+      saveSels: upsertSels,
       removeSel: (id) => sb.from('selections').delete().eq('item_id', id).then(must),
       clearSels: () => sb.from('selections').delete().not('item_id', 'is', null).then(must),
-      // ريست: بيمسح كل حاجة ويرجّع المنتجات الأصلية في خطوة واحدة جوه الداتابيز
+      // "رجّع الأصل": بيمسح كل حاجة ويرجّع المنتجات الأصلية في خطوة واحدة جوه الداتابيز
       reset: (items) => sb.rpc('reset_items', { seed: items }).then(must),
-      // Realtime: أي تغيير من أي جهاز يوصل هنا
-      // الاتصال مفتوح بس طول ما الصفحة قدامك
+      // الإشعارات
+      savePush: (s) => sb.rpc('save_push_subscription', {
+        p_endpoint: s.endpoint, p_p256dh: s.p256dh, p_auth: s.auth, p_device: DEVICE,
+      }).then(must),
+      removePush: (endpoint) => sb.rpc('delete_push_subscription', { p_endpoint: endpoint }).then(must),
+      // Realtime: الاتصال مفتوح بس طول ما الصفحة قدامك
       connect(onChange) {
         if (channel) return;
         channel = sb.channel('talabat')
@@ -139,19 +235,11 @@
   }
 
   function localApi() {
-    const save = async () => {
-      localStorage.setItem(LS_KEY, JSON.stringify({ items: state.items, sels: [...state.sel.values()] }));
-    };
+    const save = async () => lsSet(LS_KEY, { items: state.items, sels: [...state.sel.values()] });
     return {
-      async load() {
-        let data = null;
-        try { data = JSON.parse(localStorage.getItem(LS_KEY)); } catch { /* فاضي */ }
-        return data || {
-          items: seedItems(),
-          sels: [],
-        };
-      },
+      async load() { return lsGet(LS_KEY) || { items: seedItems(), sels: [] }; },
       addItem: save, updateItem: save, deleteItem: save, saveSels: save, removeSel: save, clearSels: save, reset: save,
+      savePush: async () => {}, removePush: async () => {},
       connect() {}, disconnect() {}, isConnected: () => false,
     };
   }
@@ -203,7 +291,7 @@
     try {
       const data = await api.load();
       state.items = data.items
-        .map((i) => ({ ...i, category: CAT_KEYS.has(i.category) ? i.category : 'other' }))
+        .map((i) => ({ id: i.id, name: i.name, category: CAT_KEYS.has(i.category) ? i.category : 'other' }))
         .sort((a, b) => byAr(a.name, b.name));
       const ids = new Set(state.items.map((i) => i.id));
       state.sel = new Map(data.sels.filter((s) => ids.has(s.item_id)).map((s) => [s.item_id, s]));
@@ -221,7 +309,7 @@
   // بنطبّق التغيير اللي وصل على طول (من غير ما نحمّل كل الداتا تاني)،
   // وبنتجاهل "الصدى" — يعني التغييرات اللي إحنا لسه عاملينها من الجهاز ده.
   const touched = new Map();      // id → آخر مرة اتعدّل من هنا
-  let quietUntil = 0;             // بعد "امسح الكل" أو "الريست" بنتجاهل سيل الأحداث شوية
+  let quietUntil = 0;             // بعد "امسح الكل" أو "رجّع الأصل" بنتجاهل سيل الأحداث شوية
   const touch = (...ids) => { const t = Date.now(); ids.forEach((id) => touched.set(id, t)); };
   const isEcho = (id) => Date.now() < quietUntil || Date.now() - (touched.get(id) || 0) < 3000;
 
@@ -262,15 +350,15 @@
   function setSync(s) { document.body.dataset.sync = s; }
 
   // علامة الاتصال اللي تحت العنوان: متصل (أخضر) / بيتصل / مش متصل
-  function setConn(state) {
+  function setConn(s) {
     const el = $('#conn');
-    if (!REMOTE) state = 'local';
-    el.dataset.state = state;
-    el.textContent = { on: 'متصل', connecting: 'بيتصل…', off: 'مش متصل', local: 'مش متصل بالسيرفر' }[state];
+    if (!REMOTE) s = 'local';
+    el.dataset.state = s;
+    el.textContent = { on: 'متصل', connecting: 'بيتصل…', off: 'مش متصل', local: 'مش متصل بالسيرفر' }[s];
   }
 
   // ================== الأفعال ==================
-  // المنتجات المختارة في عمود معيّن، بالترتيب (رقم 1 الأول)
+  // المنتجات المختارة في عمود معيّن، بالترتيب
   const zoneRows = (zone) => [...state.sel.values()]
     .filter((s) => s.source === zone)
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || byAr(nameOf(a.item_id), nameOf(b.item_id)));
@@ -278,7 +366,7 @@
   function moveTo(id, zone, index) {
     const cur = state.sel.get(id);
 
-    // نازل تحت: يتشال من الطلبات، ولو اتساب على كاتيجوري تانية يتنقل لها
+    // نازل للمنتجات: يتشال من الطلبات، ولو اتساب على كاتيجوري تانية يتنقل لها
     if (zone === 'pool' || zone.startsWith('cat:')) {
       touch(id);
       if (cur) { state.sel.delete(id); persist(() => api.removeSel(id)); }
@@ -292,12 +380,11 @@
       return;
     }
 
-    // طالع فوق (شارع أو أونلاين)، أو بيترتب جوه نفس العمود
+    // طالع للطلبات (شارع أو أونلاين)، أو بيترتب جوه نفس القايمة
     if (cur && cur.source === zone && index === undefined) return;
     const list = zoneRows(zone).filter((r) => r.item_id !== id);
     const at = index === undefined ? list.length : Math.max(0, Math.min(index, list.length));
     list.splice(at, 0, { qty: 1, bought: false, ...cur, item_id: id, source: zone });
-    // نرقّم العمود من الأول (1، 2، 3...) ونحفظ اللي اتغير بس
     const changed = [];
     list.forEach((r, i) => {
       const next = { item_id: r.item_id, source: r.source, qty: r.qty, bought: r.bought, position: i + 1 };
@@ -306,6 +393,7 @@
       state.sel.set(r.item_id, next);
     });
     render();
+    if (!cur || cur.source !== zone) bump(zone);
     touch(id, ...changed.map((c) => c.item_id));
     if (changed.length) persist(() => api.saveSels(changed));
   }
@@ -321,21 +409,33 @@
 
   const toggleBought = (id) => updateSel(id, { bought: !state.sel.get(id).bought });
 
-  // إضافة منتج: الاسم الأول، وبعدين تختار الكاتيجوري
+  // دوسة على منتج في "المنتجات": يتضاف للمكان المختار، ودوسة تانية تشيله
+  function togglePick(id) {
+    const cur = state.sel.get(id);
+    if (cur) {
+      moveTo(id, 'pool');
+      toast(`اتشال «${nameOf(id)}»`);
+    } else {
+      moveTo(id, state.dest);
+      toast(`اتضاف «${nameOf(id)}» لـ${ZONE_NAME[state.dest]}`);
+    }
+  }
+
+  // إضافة منتج جديد: الاسم الأول، وبعدين الكاتيجوري
   const picker = $('#catPicker');
   let pendingName = '';
 
   function startAdd(raw) {
     const name = raw.trim().replace(/\s+/g, ' ');
-    if (!name) return;
+    if (!name) { $('#q').focus(); return; }
     const existing = state.items.find((i) => norm(i.name) === norm(name));
     if (existing) {
-      toast(state.sel.has(existing.id) ? `«${existing.name}» موجود فوق بالفعل` : `«${existing.name}» موجود بالفعل`);
+      toast(state.sel.has(existing.id) ? `«${existing.name}» متضاف بالفعل` : `«${existing.name}» موجود بالفعل`);
       return;
     }
     pendingName = name;
     $('#newName').textContent = name;
-    picker.returnValue = '';
+    $('#q').blur();
     picker.showModal();
   }
 
@@ -351,13 +451,14 @@
     pendingName = '';
     state.items.push(item);
     state.items.sort((a, b) => byAr(a.name, b.name));
-    state.query = '';
-    $('#q').value = '';
-    state.cat = cat;   // افتح الكاتيجوري اللي اتضاف فيها عشان تشوفه
-    render();
+    setQuery('');
+    state.cat = cat;
+    savePrefs();
     touch(item.id);
     persist(() => api.addItem(item));
-    toast(`اتضاف «${item.name}» في ${catOf(cat).name}`);
+    // المنتج الجديد بيتضاف على طول للمكان المختار (شارع/أونلاين)
+    moveTo(item.id, state.dest);
+    toast(`اتضاف «${item.name}» في ${catOf(cat).name} ولـ${ZONE_NAME[state.dest]}`);
   }
 
   function deleteItem(id) {
@@ -373,7 +474,7 @@
     const ok = await ask({
       icon: 'trash',
       title: 'تمسح كل الطلبات؟',
-      text: 'كل اللي في الشارع والأونلاين هيرجع لمكانه تحت. المنتجات نفسها مش هتتمسح.',
+      text: 'كل اللي في الشارع والأونلاين هيتشال. المنتجات نفسها مش هتتمسح.',
       yes: 'امسح الكل',
     });
     if (!ok) return;
@@ -388,14 +489,13 @@
     const ok = await ask({
       icon: 'trash',
       title: 'ترجّع كل حاجة زي الأول؟',
-      text: `هيتمسح كل المختار فوق، وأي منتج ضفته أو مسحته أو غيّرت الكاتيجوري بتاعته، وترجع القايمة الأصلية (${fresh.length} منتج). الخطوة دي مينفعش تترجع.`,
+      text: `هيتمسح كل المختار، وأي منتج ضفته أو مسحته أو غيّرت الكاتيجوري بتاعته، وترجع القايمة الأصلية (${fresh.length} منتج). الخطوة دي مينفعش تترجع.`,
       yes: 'أيوه، رجّع كل حاجة',
     });
     if (!ok) return;
     state.items = fresh.slice().sort((a, b) => byAr(a.name, b.name));
     state.sel.clear();
-    state.query = '';
-    $('#q').value = '';
+    setQuery('');
     state.cat = CATS[0].key;
     render();
     quietUntil = Date.now() + 5000;
@@ -428,17 +528,34 @@
 
   // ================== الرسم ==================
   function render() {
-    renderZone('street', '#listStreet', '#countStreet');
-    renderZone('online', '#listOnline', '#countOnline');
+    renderZone('street');
+    renderZone('online');
     renderPool();
   }
 
-  function renderZone(zone, listSel, countSel) {
-    // الترتيب بتاعك (اسحب من المقبض ⋮⋮ عشان ترتّب) — واللي اتجاب بيفضل مكانه عشان تراجع عليه
+  const ZONE_EL = {
+    street: { list: '#listStreet', count: '#countStreet', bar: '#barStreet', nav: '#navStreet' },
+    online: { list: '#listOnline', count: '#countOnline', bar: '#barOnline', nav: '#navOnline' },
+  };
+
+  function renderZone(zone) {
+    const el = ZONE_EL[zone];
     const rows = zoneRows(zone).map((s) => ({ ...s, name: nameOf(s.item_id) }));
     const done = rows.filter((r) => r.bought).length;
-    $(countSel).textContent = rows.length ? `${done}/${rows.length}` : '';
-    $(listSel).innerHTML = rows.length
+    const left = rows.length - done;
+
+    // العدد: جبت كام من كام + خط التقدّم
+    const count = $(el.count);
+    count.textContent = !rows.length ? '' : left === 0 ? 'كله اتجاب ✓' : `جبت ${done} من ${rows.length}`;
+    count.classList.toggle('all-done', rows.length > 0 && left === 0);
+    $(el.bar).style.width = rows.length ? `${(done / rows.length) * 100}%` : '0';
+
+    // رقم الباقي على زرار التنقل تحت
+    const nav = $(el.nav);
+    nav.textContent = !rows.length ? '' : left === 0 ? '✓' : String(left);
+    nav.classList.toggle('done', rows.length > 0 && left === 0);
+
+    $(el.list).innerHTML = rows.length
       ? rows.map((r, i) => `
         <li class="row${r.bought ? ' bought' : ''}" data-drag data-id="${r.item_id}">
           <span class="grip" title="اسحب عشان ترتّب" aria-label="الترتيب ${i + 1} — اسحب عشان ترتّب">${ic('grip')}</span>
@@ -451,76 +568,99 @@
           <button type="button" class="tap ok" data-act="toggle" title="جبته" aria-label="جبته">${ic('check')}</button>
           <button type="button" class="tap rm" data-act="remove" title="شيله" aria-label="شيله من الطلبات">${ic('x')}</button>
         </li>`).join('')
-      : '<li class="empty">اسحب هنا أو دوس على أي منتج</li>';
+      : `<li class="empty">
+          <span class="empty-ic">${ic(zone === 'street' ? 'store' : 'cart')}</span>
+          <span>مفيش حاجة في ${ZONE_NAME[zone]} لسه</span>
+          <button type="button" class="btn" data-go="products" data-dest="${zone}">${ic('plus')}أضف منتجات</button>
+        </li>`;
   }
 
   function chipHtml(i) {
-    return `<button type="button" class="chip tinted" style="${tint(i.category)}" data-drag data-id="${i.id}">${esc(i.name)}${
-      state.editing ? `<span class="x" data-act="del" role="button" aria-label="امسح ${esc(i.name)}">${ic('x')}</span>` : ''
-    }</button>`;
+    const s = state.sel.get(i.id);
+    const on = s ? ` on at-${s.source}` : '';
+    const mark = s ? `<span class="chip-mark">${ic(s.source === 'street' ? 'store' : 'cart')}</span>` : '';
+    const del = state.editing ? `<span class="x" data-act="del" role="button" aria-label="امسح ${esc(i.name)}">${ic('x')}</span>` : '';
+    return `<button type="button" class="chip tinted${on}" style="${tint(i.category)}" data-drag data-id="${i.id}"
+      aria-pressed="${Boolean(s)}">${mark}${esc(i.name)}${del}</button>`;
   }
 
-  // تحت: شريط كاتيجوريز ملوّنة + منتجات الكاتيجوري المفتوحة بس (أو نتايج البحث من كل الكاتيجوريز)
+  // المنتجات: شريط كاتيجوريز + منتجات الكاتيجوري المفتوحة (أو نتايج البحث من كل الكاتيجوريز)
   function renderPool() {
-    const q = norm(state.query);
-    const avail = state.items.filter((i) => !state.sel.has(i.id));
+    const q = state.query.trim();
+    document.body.classList.toggle('has-query', Boolean(q));
+    $('#clearQ').hidden = !q;
+
+    document.querySelectorAll('.dest-btn').forEach((b) => {
+      const on = b.dataset.dest === state.dest;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', on);
+    });
 
     $('#tabs').innerHTML = CATS.map((c) => {
-      const n = avail.filter((i) => i.category === c.key).length;
+      const inCat = state.items.filter((i) => i.category === c.key);
+      const picked = inCat.filter((i) => state.sel.has(i.id)).length;
       const active = !q && c.key === state.cat;
       return `<button type="button" class="tab tinted${active ? ' active' : ''}" style="${tint(c.key)}"
           data-tab="${c.key}" data-zone="cat:${c.key}" aria-pressed="${active}" title="${c.name}">
           <span class="tab-ic">${ic(c.key)}</span><span class="tab-name">${c.short}</span>${
-          n ? `<span class="badge">${n}</span>` : ''}</button>`;
+          picked ? `<span class="badge" title="${picked} متختار">${picked}</span>` : ''}</button>`;
     }).join('');
 
     let head, list;
     if (q) {
-      list = avail.filter((i) => norm(i.name).includes(q));
-      head = `<div class="prod-head">${ic('search')} نتايج «${esc(state.query.trim())}»</div>`;
+      list = search(q);
+      head = `<div class="prod-head">${ic('search')} ${list.length ? `${list.length} نتيجة` : 'مفيش نتايج'}</div>`;
     } else {
       const c = catOf(state.cat);
-      list = avail.filter((i) => i.category === c.key);
-      head = `<div class="prod-head tinted" style="${tint(c.key)}">${ic(c.key)} ${c.name}</div>`;
+      list = state.items.filter((i) => i.category === c.key);
+      const picked = list.filter((i) => state.sel.has(i.id)).length;
+      head = `<div class="prod-head tinted" style="${tint(c.key)}">${ic(c.key)} ${c.name}
+        <span class="prod-sub">${list.length} منتج${picked ? ` · ${picked} متختار` : ''}</span></div>`;
     }
 
     let html = list.map(chipHtml).join('');
-    if (q && !state.items.some((i) => norm(i.name) === q)) {
-      html += `<button type="button" class="chip add-chip" data-act="add">${ic('plus')} أضف «${esc(state.query.trim())}»</button>`;
+    if (q && !state.items.some((i) => norm(i.name) === norm(q))) {
+      html += `<button type="button" class="chip add-chip" data-act="add">${ic('plus')} أضف «${esc(q)}» كمنتج جديد</button>`;
     }
-    if (!html) html = `<p class="prod-empty">${q ? 'مفيش نتايج' : 'كل منتجات الكاتيجوري دي متختارة فوق'}</p>`;
+    if (!html) html = '<p class="prod-empty">الكاتيجوري دي فاضية — اكتب اسم منتج فوق وضيفه</p>';
     $('#products').innerHTML = head + `<div class="prod-chips">${html}</div>`;
   }
 
   function openTab(key) {
     state.cat = key;
-    state.query = '';
-    $('#q').value = '';
-    try { localStorage.setItem(TAB_KEY, key); } catch { /* مش مهم */ }
+    savePrefs();
+    setQuery('');
+    $('#products').scrollTop = 0;
+  }
+
+  function setQuery(v) {
+    state.query = v;
+    $('#q').value = v;
     renderPool();
   }
 
-  // ================== قايمة الاختيار (دوسة على منتج تحت) ==================
-  const menu = $('#menu');
-
-  function openMenu(el) {
-    const id = el.dataset.id;
-    menu.innerHTML = `<div class="menu-title">${esc(nameOf(id))}</div>
-      <button type="button" data-pick="street">${ic('store')} من الشارع</button>
-      <button type="button" data-pick="online">${ic('cart')} أونلاين</button>`;
-    menu.dataset.id = id;
-    menu.hidden = false;
-
-    const r = el.getBoundingClientRect();
-    const mw = menu.offsetWidth, mh = menu.offsetHeight;
-    const left = Math.min(Math.max(8, r.left + r.width / 2 - mw / 2), innerWidth - mw - 8);
-    let top = r.bottom + 6;
-    if (top + mh > innerHeight - 8) top = Math.max(8, r.top - mh - 6);
-    menu.style.left = left + 'px';
-    menu.style.top = top + 'px';
-    menu.querySelector('button')?.focus({ preventScroll: true });
+  function setDest(zone) {
+    state.dest = zone;
+    savePrefs();
+    renderPool();
   }
-  const closeMenu = () => { menu.hidden = true; };
+
+  // الشاشات على الموبايل: الشارع / أونلاين / المنتجات
+  function go(view) {
+    state.view = view;
+    document.body.dataset.view = view;
+    document.querySelectorAll('.nav-btn').forEach((b) => b.setAttribute('aria-current', b.dataset.go === view ? 'page' : 'false'));
+    savePrefs();
+  }
+
+  // نبضة صغيرة على زرار التنقل لما حاجة تتضاف
+  function bump(zone) {
+    const b = document.querySelector(`.nav-btn.${zone}`);
+    if (!b) return;
+    b.classList.remove('bump');
+    void b.offsetWidth;
+    b.classList.add('bump');
+  }
 
   // ================== السحب والإفلات (ماوس + تاتش) ==================
   let press = null;   // ضغطة لسه مبقتش سحب
@@ -528,6 +668,8 @@
   let justDragged = false;
 
   document.addEventListener('pointerdown', (e) => {
+    // وانت بتبحث على الموبايل: الدوس على النتايج ميقفلش الكيبورد
+    if (document.activeElement === $('#q') && e.target.closest('.chip, .search-x, .dest-btn')) e.preventDefault();
     if (e.button !== 0) return;
     const src = e.target.closest('[data-drag]');
     // الأزرار جوه الصف مش بتبدأ سحب — إلا اسم المنتج
@@ -541,7 +683,7 @@
         if (!press) return;
         startDrag(press.x, press.y);
         navigator.vibrate?.(15);
-      }, 280);
+      }, 320);
     }
   });
 
@@ -571,7 +713,6 @@
   function startDrag(x, y) {
     const { el, id, touch } = press;
     cancelPress();
-    closeMenu();
     const ghost = document.createElement('div');
     ghost.className = 'drag-ghost';
     ghost.textContent = nameOf(id);
@@ -594,7 +735,7 @@
     placeLine(zone, y);
   }
 
-  // خط بيوضح المنتج هيتحط فين جوه العمود
+  // خط بيوضح المنتج هيتحط فين جوه القايمة
   const dropLine = document.createElement('li');
   dropLine.className = 'drop-line';
   dropLine.setAttribute('aria-hidden', 'true');
@@ -602,7 +743,7 @@
   function placeLine(zone, y) {
     const list = zone?.matches('.zone') ? zone.querySelector('.list') : null;
     if (!list) { dropLine.remove(); drag.index = undefined; return; }
-    // سكرول لوحده لو قربت من أول أو آخر العمود
+    // سكرول لوحده لو قربت من أول أو آخر القايمة
     const lr = list.getBoundingClientRect();
     if (y < lr.top + 28) list.scrollTop -= 10;
     else if (y > lr.bottom - 28) list.scrollTop += 10;
@@ -633,9 +774,15 @@
   document.addEventListener('click', (e) => {
     if (justDragged) return;
 
-    const pick = e.target.closest('[data-pick]');
-    if (pick) { moveTo(menu.dataset.id, pick.dataset.pick); closeMenu(); return; }
-    if (!e.target.closest('#menu')) closeMenu();
+    const goBtn = e.target.closest('[data-go]');
+    if (goBtn) {
+      if (goBtn.dataset.dest) setDest(goBtn.dataset.dest);
+      go(goBtn.dataset.go);
+      return;
+    }
+
+    const destBtn = e.target.closest('.dest-btn');
+    if (destBtn) { setDest(destBtn.dataset.dest); return; }
 
     const act = e.target.closest('[data-act]');
     if (act) {
@@ -658,15 +805,41 @@
     if (tab) { openTab(tab.dataset.tab); return; }
 
     const chip = e.target.closest('.chip[data-drag]');
-    if (chip) openMenu(chip);
+    if (chip) togglePick(chip.dataset.id);
   });
 
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
-  addEventListener('resize', closeMenu);
-  document.addEventListener('scroll', closeMenu, true);
+  // ================== البحث ==================
+  const qInput = $('#q');
+  qInput.addEventListener('input', () => {
+    if (document.activeElement === qInput) document.body.classList.add('searching');
+    state.query = qInput.value;
+    renderPool();
+    $('#products').scrollTop = 0;
+  });
+  qInput.addEventListener('focus', () => document.body.classList.add('searching'));
+  qInput.addEventListener('blur', () => setTimeout(() => {
+    if (document.activeElement !== qInput) document.body.classList.remove('searching');
+  }, 120));
+  $('#clearQ').addEventListener('click', () => { setQuery(''); qInput.focus(); });
 
-  $('#q').addEventListener('input', (e) => { state.query = e.target.value; renderPool(); });
-  $('#addForm').addEventListener('submit', (e) => { e.preventDefault(); startAdd(state.query); });
+  $('#addForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    // زرار "إضافة" = منتج جديد. زرار Enter في الكيبورد = اقفل الكيبورد وشوف النتايج
+    if (e.submitter?.id === 'addBtn' || !search(state.query).length) startAdd(state.query);
+    else qInput.blur();
+  });
+
+  // الكيبورد على الموبايل: الصفحة تبقى على قد الجزء اللي فاضل فوقه، فالنتايج تفضل باينة
+  const vv = window.visualViewport;
+  if (vv) {
+    const fit = () => {
+      document.documentElement.style.setProperty('--app-h', `${vv.height}px`);
+      if (document.body.classList.contains('searching')) window.scrollTo(0, 0);
+    };
+    vv.addEventListener('resize', fit);
+    fit();
+  }
+
   $('#clearAll').addEventListener('click', clearAll);
   $('#resetAll').addEventListener('click', resetAll);
   $('#editToggle').addEventListener('click', (e) => {
@@ -676,12 +849,102 @@
     renderPool();
   });
 
-  // الأيقونات الثابتة في الـ HTML
-  document.querySelectorAll('[data-icon]').forEach((el) => { el.innerHTML = ic(el.dataset.icon); });
+  // ================== اسحب لتحت = تحديث ==================
+  // الصفحة مقفولة على قد الشاشة، فالـ pull-to-refresh بتاع المتصفح مش شغال — فعملناه بنفسنا
+  const ptr = $('#ptr');
+  let pull = null;
+  const scrollerAt = (el) => el.closest('.list, .products');
+  document.addEventListener('touchstart', (e) => {
+    if (drag || press?.grip || e.touches.length !== 1 || document.body.classList.contains('searching')) return;
+    if (e.target.closest('input, dialog, .grip')) return;
+    const sc = scrollerAt(e.target);
+    if (sc && sc.scrollTop > 0) return;
+    pull = { y: e.touches[0].clientY, x: e.touches[0].clientX, d: 0, sc };
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!pull || drag) return;
+    const dy = e.touches[0].clientY - pull.y;
+    const dx = Math.abs(e.touches[0].clientX - pull.x);
+    if (pull.sc && pull.sc.scrollTop > 0) { pull = null; ptr.style.transform = ''; return; }
+    if (dy < 0 || dx > dy) { pull.d = 0; ptr.style.transform = ''; return; }
+    pull.d = Math.min(dy * 0.5, 110);
+    ptr.style.transform = `translate(-50%, ${pull.d}px) rotate(${pull.d * 2.4}deg)`;
+    ptr.classList.toggle('ready', pull.d > 70);
+  }, { passive: true });
+  document.addEventListener('touchend', () => {
+    if (!pull) return;
+    const go = pull.d > 70;
+    pull = null;
+    if (go) {
+      ptr.classList.add('loading');
+      flushSels();
+      queue.then(() => location.reload());   // نستنى أي حفظ شغال يخلص الأول
+    } else {
+      ptr.style.transform = '';
+      ptr.classList.remove('ready');
+    }
+  });
 
-  // أزرار الكاتيجوريز في نافذة الإضافة
-  $('#catGrid').innerHTML = CATS.map((c) =>
-    `<button type="button" class="cat-pick tinted" style="${tint(c.key)}" value="${c.key}">${ic(c.key)}${c.name}</button>`).join('');
+  // ================== الإشعارات ==================
+  const notifBtn = $('#notifBtn');
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const pushEnabledHere = REMOTE && Boolean(cfg.VAPID_PUBLIC_KEY);
+
+  const b64ToBytes = (b64) => {
+    const s = atob((b64 + '='.repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(s, (c) => c.charCodeAt(0));
+  };
+
+  async function currentSub() {
+    if (!pushSupported) return null;
+    const reg = await navigator.serviceWorker.ready;
+    return reg.pushManager.getSubscription();
+  }
+
+  async function refreshBell() {
+    if (!pushEnabledHere || (!pushSupported && !isIOS)) { notifBtn.hidden = true; return; }
+    notifBtn.hidden = false;
+    const on = pushSupported && Notification.permission === 'granted' && Boolean(await currentSub());
+    notifBtn.classList.toggle('on', on);
+    notifBtn.innerHTML = ic(on ? 'bellOn' : 'bell');
+    notifBtn.title = on ? 'الإشعارات شغالة — دوس عشان تقفلها' : 'شغّل الإشعارات';
+    return on;
+  }
+
+  async function savePushSub(sub) {
+    const j = sub.toJSON();
+    await api.savePush({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth });
+    lsSet('talabat-elbeit-push', j.endpoint);
+  }
+
+  notifBtn.addEventListener('click', async () => {
+    if (!pushSupported) {
+      toast(isIOS && !standalone ? 'على الآيفون: ثبّت التطبيق على الشاشة الرئيسية الأول، وافتحه من هناك' : 'المتصفح ده مش بيدعم الإشعارات');
+      return;
+    }
+    try {
+      const sub = await currentSub();
+      if (sub && Notification.permission === 'granted') {
+        await api.removePush(sub.endpoint).catch(() => {});
+        await sub.unsubscribe();
+        lsSet('talabat-elbeit-push', null);
+        toast('الإشعارات اتقفلت');
+      } else {
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') { toast('الإشعارات مرفوضة — تقدر تفتحها من إعدادات المتصفح'); return; }
+        const reg = await navigator.serviceWorker.ready;
+        const s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(cfg.VAPID_PUBLIC_KEY) });
+        await savePushSub(s);
+        toast('تمام! هيجيلك إشعار لما حد يضيف حاجة');
+      }
+    } catch (err) {
+      console.error(err);
+      toast('مقدرتش أشغّل الإشعارات');
+    }
+    refreshBell();
+  });
 
   // ================== الاتصال اللحظي (Realtime) ==================
   // بيتفتح لما الصفحة تبقى قدامك، وبيتقفل لما تقفلها أو تروح لأبلكيشن تاني
@@ -713,11 +976,21 @@
     const t = $('#toast');
     t.textContent = msg;
     t.hidden = false;
+    t.classList.remove('show');
+    void t.offsetWidth;
+    t.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+    toastTimer = setTimeout(() => { t.hidden = true; }, 2200);
   }
 
   // ================== تشغيل ==================
+  // الأيقونات الثابتة في الـ HTML
+  document.querySelectorAll('[data-icon]').forEach((el) => { el.innerHTML = ic(el.dataset.icon); });
+  // أزرار الكاتيجوريز في نافذة الإضافة
+  $('#catGrid').innerHTML = CATS.map((c) =>
+    `<button type="button" class="cat-pick tinted" style="${tint(c.key)}" value="${c.key}">${ic(c.key)}${c.name}</button>`).join('');
+  go(state.view);
+
   (async () => {
     setConn(REMOTE ? 'connecting' : 'local');
     try {
@@ -732,6 +1005,12 @@
     await reload();
     ready = true;
     if (document.visibilityState === 'visible') api.connect(onRemoteChange);
+
+    // لو الإشعارات شغالة بس الاشتراك اتغير (أو اتسجّل من جهاز تاني)، نحدّثه مرة واحدة
+    if (await refreshBell()) {
+      const sub = await currentSub();
+      if (sub && lsGet('talabat-elbeit-push') !== sub.endpoint) savePushSub(sub).catch(console.error);
+    }
   })();
 
   // PWA: يخلّي الموقع يتسطّب على الموبايل

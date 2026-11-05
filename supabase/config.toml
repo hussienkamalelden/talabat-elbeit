@@ -1,0 +1,3 @@
+# إعدادات Supabase CLI (اختياري — لو هترفع الفانكشن بـ `supabase functions deploy notify`)
+[functions.notify]
+verify_jwt = false

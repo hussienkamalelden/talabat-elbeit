@@ -2,14 +2,14 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>طلبات البيت</title>
   <meta name="description" content="قايمة طلبات البيت: من الشارع وأونلاين">
 
   <!-- PWA -->
   <link rel="manifest" href="manifest.webmanifest">
-  <meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#14161a" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f4f2ed" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#111316" media="(prefers-color-scheme: dark)">
   <link rel="icon" type="image/png" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -23,7 +23,10 @@
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body data-view="street">
+  <!-- اسحب لتحت من أول الصفحة = تحديث -->
+  <div id="ptr" class="ptr" aria-hidden="true"><span class="ptr-ic" data-icon="arrowDown"></span></div>
+
   <header class="top">
     <div class="brand">
       <span class="logo" data-icon="basket"></span>
@@ -32,37 +35,74 @@
         <span id="conn" class="conn" data-state="off" role="status" aria-live="polite">مش متصل</span>
       </div>
     </div>
+    <button id="notifBtn" class="btn ghost square" type="button" hidden aria-label="الإشعارات" title="الإشعارات"><span data-icon="bell"></span></button>
     <button id="resetAll" class="btn ghost" type="button" title="رجّع كل حاجة زي الأول">رجّع الأصل</button>
-    <button id="clearAll" class="btn danger" type="button"><span data-icon="trash"></span>امسح الكل</button>
+    <button id="clearAll" class="btn danger" type="button" aria-label="امسح الكل" title="امسح الكل"><span data-icon="trash"></span><span class="lbl">امسح الكل</span></button>
   </header>
 
   <main>
-    <!-- المختار: يمين = الشارع، شمال = أونلاين -->
+    <!-- الطلبات: على الكمبيوتر جنب بعض، وعلى الموبايل كل واحدة شاشة لوحدها -->
     <section class="board">
-      <div class="zone street" data-zone="street">
-        <div class="zone-head"><span class="zone-title"><span data-icon="store"></span>من الشارع</span><span class="count" id="countStreet"></span></div>
+      <div class="zone street view" data-view="street" data-zone="street">
+        <div class="zone-head">
+          <div class="zone-row">
+            <span class="zone-title"><span data-icon="store"></span>من الشارع</span>
+            <span class="count" id="countStreet"></span>
+          </div>
+          <div class="progress" aria-hidden="true"><i id="barStreet"></i></div>
+        </div>
         <ul class="list" id="listStreet"></ul>
+        <button type="button" class="fab" data-go="products" data-dest="street"><span data-icon="plus"></span>أضف للشارع</button>
       </div>
-      <div class="zone online" data-zone="online">
-        <div class="zone-head"><span class="zone-title"><span data-icon="cart"></span>أونلاين</span><span class="count" id="countOnline"></span></div>
+      <div class="zone online view" data-view="online" data-zone="online">
+        <div class="zone-head">
+          <div class="zone-row">
+            <span class="zone-title"><span data-icon="cart"></span>أونلاين</span>
+            <span class="count" id="countOnline"></span>
+          </div>
+          <div class="progress" aria-hidden="true"><i id="barOnline"></i></div>
+        </div>
         <ul class="list" id="listOnline"></ul>
+        <button type="button" class="fab" data-go="products" data-dest="online"><span data-icon="plus"></span>أضف للأونلاين</button>
       </div>
     </section>
 
-    <!-- كل المنتجات: شريط كاتيجوريز + منتجات الكاتيجوري المفتوحة -->
-    <section class="pool" id="pool" data-zone="pool">
+    <!-- كل المنتجات -->
+    <section class="pool view" id="pool" data-view="products" data-zone="pool">
+      <div class="dest" role="radiogroup" aria-label="المنتجات هتتضاف لـ">
+        <span class="dest-lbl">هتضيف لـ</span>
+        <button type="button" class="dest-btn street" data-dest="street" role="radio"><span data-icon="store"></span>الشارع</button>
+        <button type="button" class="dest-btn online" data-dest="online" role="radio"><span data-icon="cart"></span>أونلاين</button>
+      </div>
       <form id="addForm" class="add" autocomplete="off">
         <label class="search">
           <span class="search-ic" data-icon="search"></span>
-          <input id="q" type="search" maxlength="60" placeholder="ابحث أو اكتب منتج جديد…" enterkeyhint="done" aria-label="ابحث أو أضف منتج">
+          <input id="q" type="search" maxlength="60" placeholder="ابحث أو اكتب منتج جديد…" enterkeyhint="search" aria-label="ابحث أو أضف منتج">
+          <button type="button" class="search-x" id="clearQ" hidden aria-label="امسح البحث"><span data-icon="x"></span></button>
         </label>
-        <button class="btn" type="submit">إضافة</button>
-        <button id="editToggle" class="btn ghost" type="button" aria-label="تعديل المنتجات" title="تعديل (مسح منتجات)"><span data-icon="pencil"></span></button>
+        <button class="btn" type="submit" id="addBtn">إضافة</button>
+        <button id="editToggle" class="btn ghost square" type="button" aria-label="تعديل المنتجات" title="تعديل (مسح منتجات)"><span data-icon="pencil"></span></button>
       </form>
       <nav id="tabs" class="tabs" aria-label="الكاتيجوريز"></nav>
       <div id="products" class="products"></div>
     </section>
   </main>
+
+  <!-- التنقل على الموبايل -->
+  <nav class="bottom-nav" aria-label="التنقل">
+    <button type="button" class="nav-btn street" data-go="street" data-zone="street">
+      <span class="nav-ic"><span data-icon="store"></span><b class="nav-badge" id="navStreet"></b></span>
+      <span class="nav-lbl">الشارع</span>
+    </button>
+    <button type="button" class="nav-btn online" data-go="online" data-zone="online">
+      <span class="nav-ic"><span data-icon="cart"></span><b class="nav-badge" id="navOnline"></b></span>
+      <span class="nav-lbl">أونلاين</span>
+    </button>
+    <button type="button" class="nav-btn products" data-go="products">
+      <span class="nav-ic"><span data-icon="grid"></span></span>
+      <span class="nav-lbl">المنتجات</span>
+    </button>
+  </nav>
 
   <!-- اختيار الكاتيجوري لما تضيف منتج جديد -->
   <dialog id="catPicker" class="sheet">
@@ -84,7 +124,6 @@
     </div>
   </dialog>
 
-  <div id="menu" class="menu" hidden></div>
   <div id="toast" class="toast" hidden></div>
 
   <script src="config.js"></script>
