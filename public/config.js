@@ -1,6 +1,7 @@
-// بيانات Supabase (من Project Settings → API).
-// لو سبتهم فاضيين، الموقع هيشتغل عادي ويحفظ على المتصفح ده بس (localStorage).
+// بيانات Supabase (من Project Settings → API Keys / Data API).
+// الـ publishable key معمول عشان يبقى ظاهر في المتصفح — الحماية في الداتابيز نفسها (RLS).
+// ⚠️ أوعى تحط هنا الـ secret / service_role key.
 window.APP_CONFIG = {
-  SUPABASE_URL: "",   // مثال: "https://xxxxxxxx.supabase.co"
-  SUPABASE_KEY: ""    // الـ publishable / anon key (مش الـ secret / service_role أبدًا)
+  SUPABASE_URL: "https://rpqykeueaveuymywwyio.supabase.co",
+  SUPABASE_KEY: "sb_publishable_gSegtHkdkAaVrL34kpOh-A_Nmy3_A2b"
 };
