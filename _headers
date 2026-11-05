@@ -1,0 +1,12 @@
+# إعدادات Cloudflare Pages (بيقراها لوحده)
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+
+# الـ service worker لازم يتحدّث على طول
+/sw.js
+  Cache-Control: no-cache
+
+/manifest.webmanifest
+  Content-Type: application/manifest+json
